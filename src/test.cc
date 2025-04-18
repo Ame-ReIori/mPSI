@@ -11,10 +11,13 @@
 #include <libOTe/Vole/Silent/SilentVoleReceiver.h>
 #include <libOTe/Vole/Silent/SilentVoleSender.h>
 #include <macoro/coroutine_handle.h>
+#include <macoro/thread_pool.h>
 #include <unistd.h>
 #include <volePSI/Paxos.h>
 
+#include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <thread>
 #include <vector>
 
@@ -76,11 +79,11 @@ void tOKVS() {
   uint64_t n = 1 << 20;
   PRNG prng(sysRandomSeed());
   volePSI::Baxos baxos;
-  baxos.init(n, BIN_SIZE, CUCKOO_HASH_NUM, LAMBDA, volePSI::PaxosParam::Binary,
+  baxos.init(n, BIN_SIZE, CUCKOO_HASH_NUM, LAMBDA, volePSI::PaxosParam::GF128,
              AllOneBlock);
 
-  PRNG prng0(ZeroBlock);
-  PRNG prng1(AllOneBlock);
+  PRNG prng0(sysRandomSeed());
+  PRNG prng1(sysRandomSeed());
   std::vector<block> x0(n);
   std::vector<block> y0(n);
   std::vector<block> x1(n);
@@ -124,57 +127,32 @@ void tOKVS() {
   std::cout << count << "\n";
 
   // do multiplication
-  std::vector<block> as(baxos.size());
   block b = prng.get();
-  std::vector<block> cs(baxos.size());
-
-  prng.get<block>(as);
-  for (int i = 0; i < as.size(); ++i) {
-    cs[i] = b & as[i];
-  }
-
-  std::vector<block> a0(baxos.size());
-  std::vector<block> a1(baxos.size());
-  block b0 = prng.get();
-  block b1 = b ^ b0;
-  std::vector<block> c0(baxos.size());
-  std::vector<block> c1(baxos.size());
-
-  prng.get<block>(a0);
-  prng.get<block>(c0);
-
-  for (int i = 0; i < a0.size(); ++i) {
-    a1[i] = as[i] ^ a0[i];
-    c1[i] = cs[i] ^ c0[i];
-  }
 
   // 1. open
+
   std::vector<block> o0(baxos.size());
   std::vector<block> o1(baxos.size());
   std::vector<block> o(baxos.size());
+  // test availablity of c_
+  
   for (int i = 0; i < baxos.size(); ++i) {
-    o0[i] = c[i] ^ a0[i];
-    o1[i] = c_[i] ^ a1[i];
-    o[i] = o0[i] ^ o1[i];
+    o0[i] = d0[i].gf128Mul(b);
+    o1[i] = d1[i].gf128Mul(b);
   }
 
   for (int i = 0; i < baxos.size(); ++i) {
-    o0[i] = (o[i] & b0) ^ c0[i];
-    o1[i] = (o[i] & b1) ^ c1[i];
-  }
-
-  for (int i = 0; i < c.size(); ++i) {
-    // c_[i] = c[i] & b;
     c_[i] = o0[i] ^ o1[i];
   }
 
-  // test availablity of c_
   baxos.decode<block>(x0, v_, c_);
 
   int count_ = 0;
   for (int i = 0; i < v.size(); ++i) {
-    if ((v[i] == v_[i]) && (v[i] == ZeroBlock) && (v_[i] == ZeroBlock))
-      count_++;
+    if (((v[i].gf128Mul(b)) != v_[i])) {
+      std::cout << "error\n";
+      break;
+    }
   }
   std::cout << count_ << "\n";
 }
@@ -228,6 +206,10 @@ void tNetwork(const CLP &cmd) {
   CloseConnection(idx, chls);
 }
 
+struct BlockCmp {
+  bool operator()(block &a, block &b) const { return a == b; };
+};
+
 void tMPSI(const CLP &cmd) {
   Timer timer;
   int nparty = cmd.getOr("n", 15);
@@ -236,42 +218,196 @@ void tMPSI(const CLP &cmd) {
   int logn = cmd.getOr("m", 20);
   int neles = 1 << logn;
   int nint = cmd.getOr("i", 1000);
-  int ttp = cmd.isSet("ttp");
+  int ttp = cmd.getOr("ttp", 0);
+  int threshold = nparty - t - 1;
+
+  size_t offline_comm = 0;
+  size_t offline_comm_recv = 0;
+  size_t online_comm = 0;
+  size_t online_comm_recv = 0;
+
   std::vector<Socket> chls;
   std::vector<block> inner_okvs;
   std::vector<block> in(neles);
   std::vector<block> out;
-  // std::vector<CoeffCtxGF2::Vec<block>> as;
-  // std::vector<CoeffCtxGF2::Vec<block>> bs;
-  // std::vector<CoeffCtxGF2::Vec<block>> cs;
-  // block d;
   std::vector<block> a;
-  std::vector<block> c;
   block b;
+  std::vector<block> c;
+
   PRNG prng(sysRandomSeed());
   prng.get<block>(in);
+  PRNG inter_prng(ZeroBlock);
 
   for (int i = 0; i < nint; ++i) {
-    in[(i + idx) % neles] = toBlock(i);
+    in[(i + idx) % neles] = inter_prng.get();
   }
 
   timer.setTimePoint("start");
+
   EstablishConnection(idx, nparty, chls);
-  timer.setTimePoint("finish connection");
-  // if (ttp) {
-  //   TTPOffline(idx, nparty, t, neles, chls, inner_okvs, a, b, c);
-  // }
-  if (t != (nparty - 1)) {
-    // Offline(idx, nparty, t, neles, chls, inner_okvs, as, bs, cs, d);
-    Offline(idx, nparty, t, neles, chls, inner_okvs, a, b, c);
-  } else {
-    OfflineFullThreshold(idx, nparty, t, neles, chls, inner_okvs, a, b, c);
+
+  timer.setTimePoint("connection");
+
+  Offline(ttp, idx, nparty, t, neles, chls, inner_okvs, a, b, c);
+
+  if (idx == 0) {
+    if (t < nparty - 1) {
+      timer.setTimePoint("outer offline");
+    }
+  } else if (idx == nparty - 2) {
+    timer.setTimePoint("inner offline");
+  } else if (idx == nparty - 1) {
+    timer.setTimePoint("pivot offline");
   }
-  timer.setTimePoint("finish offline");
-  // Online(idx, nparty, t, in, chls, inner_okvs, as, bs, cs, d, out);
+
+  if (idx == 0) {
+    for (int i = 1; i < nparty; ++i) {
+      coproto::sync_wait(chls[i].flush());
+      offline_comm += chls[i].bytesSent();
+      offline_comm_recv += chls[i].bytesReceived();
+    }
+    if (t < nparty - 1) {
+      std::cout << "[Offline] Outer Comm. (Sent): "
+                << offline_comm / 1024.0 / 1024 << " MB\n";
+      std::cout << "[Offline] Outer Comm. (Recv): "
+                << offline_comm_recv / 1024.0 / 1024 << " MB\n";
+    }
+  } else if (idx == nparty - 1) {
+    for (int i = 0; i < nparty - 1; ++i) {
+      coproto::sync_wait(chls[i].flush());
+      offline_comm += chls[i].bytesSent();
+      offline_comm_recv += chls[i].bytesReceived();
+    }
+    std::cout << "[Offline] Pivot Comm. (Sent): "
+              << offline_comm / 1024.0 / 1024 << " MB\n";
+    std::cout << "[Offline] Pivot Comm. (Recv): "
+              << offline_comm_recv / 1024.0 / 1024 << " MB\n";
+  } else if (idx == nparty - 2) {
+    for (int i = 0; i < nparty; ++i) {
+      if (i == idx) continue;
+      coproto::sync_wait(chls[i].flush());
+      offline_comm += chls[i].bytesSent();
+      offline_comm_recv += chls[i].bytesReceived();
+    }
+    std::cout << "[Offline] Inner Comm. (Sent): "
+              << offline_comm / 1024.0 / 1024 << " MB\n";
+    std::cout << "[Offline] Inner Comm. (Recv): "
+              << offline_comm_recv / 1024.0 / 1024 << " MB\n";
+  }
+
+  // FIN sync for correct offline runtime estimate
+  if (idx == 0) {
+    std::vector<uint8_t> fin(2);
+    std::vector<std::thread> fin_thrds(nparty - 1);
+    for (int i = 0; i < nparty - 1; ++i) {
+      fin_thrds[i] = std::thread([&, i]() {
+        coproto::sync_wait(chls[i + 1].recv(fin));
+        return;
+      });
+    }
+    for (auto &thrd : fin_thrds) thrd.join();
+  } else {
+    std::vector<uint8_t> fin = {0, 0};
+    std::thread fin_thrd = std::thread([&]() {
+      coproto::sync_wait(chls[0].send(fin));
+      return;
+    });
+    fin_thrd.join();
+  }
+
+  offline_comm = 0;
+  offline_comm_recv = 0;
+  for (int i = 0; i < chls.size(); ++i) {
+    if (idx == i) continue;
+    coproto::sync_wait(chls[i].flush());
+    offline_comm += chls[i].bytesSent();
+    offline_comm_recv += chls[i].bytesReceived();
+  }
+
+  timer.setTimePoint("finish offline statistic");
+
   Online(idx, nparty, t, in, chls, inner_okvs, a, b, c, out);
-  timer.setTimePoint("finish online");
-  if (idx == nparty - 1) std::cout << timer << "\n";
+
+  if (idx == 0) {
+    if (t < nparty - 1) {
+      timer.setTimePoint("outer online");
+    } else if (t == nparty - 1) {
+      timer.setTimePoint("inner online");
+    }
+  } else if (idx == nparty - 2) {
+    timer.setTimePoint("inner online");
+  } else if (idx == nparty - 1) {
+    timer.setTimePoint("pivot online");
+  }
+
+  if (idx == 0) {
+    for (int i = 1; i < nparty; ++i) {
+      coproto::sync_wait(chls[i].flush());
+      online_comm += chls[i].bytesSent();
+      online_comm_recv += chls[i].bytesReceived();
+    }
+    online_comm -= offline_comm;
+    online_comm_recv -= offline_comm_recv;
+    std::cout << "[Online] Outer Comm. (Sent): " << online_comm / 1024.0 / 1024
+              << " MB\n";
+    std::cout << "[Online] Outer Comm. (Recv): "
+              << online_comm_recv / 1024.0 / 1024 << " MB\n";
+    std::cout << timer << "\n";
+  } else if (idx == nparty - 1) {
+    for (int i = 0; i < nparty - 1; ++i) {
+      coproto::sync_wait(chls[i].flush());
+      online_comm += chls[i].bytesSent();
+      online_comm_recv += chls[i].bytesReceived();
+    }
+    online_comm -= offline_comm;
+    online_comm_recv -= offline_comm_recv;
+    std::cout << "[Online] Pivot Comm. (Sent): " << online_comm / 1024.0 / 1024
+              << " MB\n";
+    std::cout << "[Online] Pivot Comm. (Recv): "
+              << online_comm_recv / 1024.0 / 1024 << " MB\n";
+    std::cout << "Intersection size: " << out.size() << "\n";
+    std::cout << timer << "\n";
+  } else if (idx == nparty - 2) {
+    for (int i = 0; i < nparty; ++i) {
+      if (i == idx) continue;
+      coproto::sync_wait(chls[i].flush());
+      online_comm += chls[i].bytesSent();
+      online_comm_recv += chls[i].bytesReceived();
+    }
+    online_comm -= offline_comm;
+    online_comm_recv -= offline_comm_recv;
+    std::cout << "[Online] Inner Comm. (Sent): " << online_comm / 1024.0 / 1024
+              << " MB\n";
+    std::cout << "[Online] Inner Comm. (Recv): "
+              << online_comm_recv / 1024.0 / 1024 << " MB\n";
+    std::cout << timer << "\n";
+  }
+
+  // FIN sync for correct offline runtime estimate
+  if (idx == 0) {
+    std::vector<uint8_t> fin(2);
+    std::vector<std::thread> fin_thrds(nparty - 1);
+    for (int i = 0; i < nparty - 1; ++i) {
+      fin_thrds[i] = std::thread([&, i]() {
+        coproto::sync_wait(chls[i + 1].recv(fin));
+        return;
+      });
+    }
+    for (auto &thrd : fin_thrds) thrd.join();
+  } else {
+    std::vector<uint8_t> fin = {0, 0};
+    std::thread fin_thrd = std::thread([&]() {
+      coproto::sync_wait(chls[0].send(fin));
+      return;
+    });
+    fin_thrd.join();
+  }
+
+  for (int i = 0; i < chls.size(); ++i) {
+    if (idx == i) continue;
+    coproto::sync_wait(chls[i].flush());
+  }
+
   CloseConnection(idx, chls);
 }
 

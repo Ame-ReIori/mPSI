@@ -34,7 +34,7 @@ int OfflineFullThreshold(uint8_t idx, uint8_t nparty, uint8_t t, uint64_t neles,
 //             std::vector<CoeffCtxGF2::Vec<block>> &as,
 //             std::vector<CoeffCtxGF2::Vec<block>> &cs,
 //             std::vector<CoeffCtxGF2::Vec<block>> &bs, block &d);
-int Offline(uint8_t idx, uint8_t nparty, uint8_t t, uint64_t neles,
+int Offline(uint8_t ttp, uint8_t idx, uint8_t nparty, uint8_t t, uint64_t neles,
             std::vector<Socket> &chls, std::vector<block> &inner_okvs,
             std::vector<block> &a, block &b, std::vector<block> &c);
 
