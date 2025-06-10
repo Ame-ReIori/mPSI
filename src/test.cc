@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "band_okvs.h"
 #include "defines.h"
 #include "mpsi.h"
 #include "utils.h"
@@ -135,7 +136,7 @@ void tOKVS() {
   std::vector<block> o1(baxos.size());
   std::vector<block> o(baxos.size());
   // test availablity of c_
-  
+
   for (int i = 0; i < baxos.size(); ++i) {
     o0[i] = d0[i].gf128Mul(b);
     o1[i] = d1[i].gf128Mul(b);
@@ -411,9 +412,32 @@ void tMPSI(const CLP &cmd) {
   CloseConnection(idx, chls);
 }
 
+void tBandOKVS() {
+  double epsilon = 0.05;
+  int n = 1 << 20;
+  int m = static_cast<int>((1 + epsilon) * n);
+  int band_length = 376;
+
+  PRNG prng(sysRandomSeed());
+  std::vector<block> keys(n);
+  std::vector<block> values(n);
+
+  prng.get<block>(keys);
+  prng.get<block>(values);
+
+  band_okvs::BandOkvs okvs;
+  okvs.Init(n, m, band_length);
+
+  std::vector<block> out(okvs.Size());
+  okvs.Encode(keys.data(), values.data(), out.data());
+  std::vector<block> decoded(n);
+  okvs.Decode(keys.data(), out.data(), decoded.data());
+}
+
 int main(int argc, char **argv) {
   CLP cmd(argc, argv);
   if (cmd.isSet("vole")) tVole(cmd);
   if (cmd.isSet("mpsi")) tMPSI(cmd);
   if (cmd.isSet("okvs")) tOKVS();
+  if (cmd.isSet("band")) tBandOKVS();
 }

@@ -9,6 +9,8 @@ file(GLOB_RECURSE SRCS
     ./test.cc
     ./mpsi.cc
     ./utils.cc
+    ./band.cc
+    ./band_okvs.cc
 )
 
 add_executable(test ${SRCS})
