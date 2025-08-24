@@ -16,6 +16,8 @@ if(NOT EXISTS ${BUILD_DIR} OR NOT VOLEPSI_FOUND)
                                      -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
                                      -DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}
                                      -DVOLE_PSI_ENABLE_BOOST=ON
+                                     -DVOLE_PSI_ENABLE_RELIC=true
+                                     -DVOLE_PSI_ENABLE_SODIUM=false
                                      -DSUDO_FETCH=OFF
                                      -DFETCH_AUTO=ON
                                      -DVOLE_PSI_NO_SYSTEM_PATH=true
