@@ -1,5 +1,7 @@
 # mPSI with preprocessing
 
+The implementation of our paper [Practical Multi-party Private Set Intersection with Reducible Zero-sharing](https://eprint.iacr.org/2025/2019), which is accepted by S&P 2026.
+
 ## Building the Project
 
 Use the following commands.
